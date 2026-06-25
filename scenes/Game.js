@@ -1,0 +1,434 @@
+import PatrolEnemy from '../entities/PatrolEnemy.js';
+import ChaseEnemy from '../entities/ChaseEnemy.js';
+
+const colors = [
+    0xff0000, 0xff7f00, 0xffff00, 0x00ff00,
+    0x0000ff, 0x4b0082, 0x9400d3
+];
+
+export default class Game extends Phaser.Scene {
+    constructor() {
+        super({ key: 'Game' });
+        this.score = 0;
+        this.gameOver = false;
+        this.lastScaleMilestone = 0;
+        this.colorIndex = 0;
+        this.maxStars = 10;
+        this.reachedMax = false;
+        this.timerEvent = null;
+        this.startTime = 0;
+        this.timeElapsed = 0;
+    }
+
+    preload() {
+    }
+
+    create() {
+        //reset state
+        this.score = 0;
+        this.gameOver = false;
+        this.reachedMax = false;
+        this.lastScaleMilestone = 0;
+        this.colorIndex = 0;
+        this.timeElapsed = 0;
+        this.startTime = this.time.now;
+
+        //reference to UI scene
+        this.uiScene = this.scene.get('UI');
+
+        //background
+        this.add.image(400, 300, "bg").setDisplaySize(800, 600);
+
+        //ground platform
+        this.ground = this.physics.add.staticGroup();
+        const base = this.ground.create(400, 580, "mainGround");
+        base.setScale(800 / base.width, 100 / base.height);
+        base.refreshBody();
+        base.body.setSize(base.displayWidth, 30);
+        base.body.setOffset(0, base.displayHeight - 80);
+
+        //platforms
+        this.platforms = this.physics.add.staticGroup();
+        
+        const platformPositions = [
+            { x: 150, y: 450 },
+            { x: 440, y: 380 },
+            { x: 400, y: 280 },
+            { x: 750, y: 410 },
+            { x: 90, y: 310 },
+            { x: 650, y: 175 },
+            { x: 350, y: 100 },
+            { x: 250, y: 180 }
+        ];
+
+        platformPositions.forEach(pos => {
+            const p = this.platforms.create(pos.x, pos.y, "platform");
+            p.setScale(0.5);
+            p.refreshBody();
+            p.body.setSize(p.displayWidth, 20);
+            p.body.setOffset(0, p.displayHeight - 20);
+        });
+
+        //player setup
+        this.player = this.physics.add.sprite(100, 400, "player");
+        this.player.setScale(0.1);
+        this.player.setBounce(0.1);
+        this.player.setCollideWorldBounds(true);
+        this.player.setSize(180, 425);
+        this.player.setOffset(180, 180);
+        this.player.isInvincible = false;
+
+        //colliders
+        this.physics.add.collider(this.player, this.ground);
+        this.physics.add.collider(this.player, this.platforms);
+
+        //controls
+        this.cursors = this.input.keyboard.createCursorKeys();
+
+        //player animations
+        this.anims.create({
+            key: "idle",
+            frames: [{ key: "player", frame: 0 }],
+            frameRate: 1,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: "walk",
+            frames: [
+                { key: "player", frame: 2 },
+                { key: "player", frame: 3 }
+            ],
+            frameRate: 8,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: "jump",
+            frames: [{ key: "player", frame: 1 }],
+            frameRate: 1
+        });
+
+        this.player.play("idle");
+
+        //patrol enemy animations
+        this.anims.create({
+            key: "patrolIdle",
+            frames: [{ key: "patrolEnemy", frame: 0 }],
+            frameRate: 1,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: "patrolWalk",
+            frames: [
+                { key: "patrolEnemy", frame: 2 },
+                { key: "patrolEnemy", frame: 3 }
+            ],
+            frameRate: 8,
+            repeat: -1
+        });
+
+        //chase enemy animations
+        this.anims.create({
+            key: "chaseIdle",
+            frames: [{ key: "chaseEnemy", frame: 0 }],
+            frameRate: 1,
+            repeat: -1
+        });
+
+        this.anims.create({
+            key: "chaseWalk",
+            frames: [
+                { key: "chaseEnemy", frame: 2 },
+                { key: "chaseEnemy", frame: 3 }
+            ],
+            frameRate: 8,
+            repeat: -1
+        });
+
+        //stars group
+        this.stars = this.physics.add.group();
+
+        //collect star method
+        this.collectStar = (player, star) => {
+            star.destroy();
+            
+            if (this.score < this.maxStars) {
+                this.score++;
+                this.spawnParticles(star.x, star.y);
+                console.log("Score: " + this.score + "/" + this.maxStars);
+            }
+
+            //win condition
+            if (this.score >= this.maxStars && !this.reachedMax) {
+                this.reachedMax = true;
+                this.score = this.maxStars;
+                this.timeElapsed = (this.time.now - this.startTime) / 1000;
+                console.log("VICTORY! All stars collected! Time: " + this.timeElapsed + "s");
+                this.triggerWin();
+                return;
+            }
+
+            if (this.reachedMax) return;
+
+            player.setTint(colors[this.colorIndex]);
+            this.colorIndex = (this.colorIndex + 1) % colors.length;
+
+            if (Math.floor(this.score / 5) > this.lastScaleMilestone) {
+                this.lastScaleMilestone++;
+                player.setScale(player.scaleX * 1.1);
+            }
+
+            //spawn new star and bomb
+            const x = Phaser.Math.Between(50, 750);
+            const newStar = this.stars.create(x, 0, "star");
+            newStar.setScale(0.5);
+            newStar.setCircle(newStar.width / 2);
+            newStar.setBounce(0);
+            newStar.setCollideWorldBounds(true);
+
+            const bombX = player.x < 400 ? Phaser.Math.Between(420, 780) : Phaser.Math.Between(20, 380);
+            const bomb = this.bombs.create(bombX, 0, "bomb");
+            bomb.body.setOffset(0, 70);
+            bomb.setScale(0.3);
+            bomb.setCircle(bomb.displayWidth / 2);
+            bomb.setBounce(1);
+            bomb.setCollideWorldBounds(true);
+            bomb.setVelocity(Phaser.Math.Between(-220, 220), 20);
+        };
+
+        //enemy hit handler
+        this.hitEnemy = (player, enemy) => {
+            if (this.gameOver) return;
+            
+            //stomp from above
+            if (player.body.velocity.y > 0 && player.y < enemy.y) {
+                enemy.disableBody(true, true);
+                this.spawnParticles(enemy.x, enemy.y);
+                player.setVelocityY(-300);
+            } else {
+                if (!player.isInvincible) {
+                    this.playerHit();
+                }
+            }
+        };
+
+        //particle burst helper
+        this.spawnParticles = (x, y) => {
+            const particles = this.add.particles(x, y, 'particle', {
+                speed: { min: 80, max: 200 },
+                scale: { start: 0.6, end: 0 },
+                lifespan: 400,
+                quantity: 12,
+                emitting: false
+            });
+            particles.explode(12);
+        };
+
+        //player hit with iframes
+        this.playerHit = () => {
+            if (this.gameOver) return;
+            if (this.player.isInvincible) return;
+            
+            this.player.isInvincible = true;
+            if (this.uiScene) {
+                this.uiScene.removeLife();
+            }
+            
+            this.tweens.add({
+                targets: this.player,
+                alpha: 0,
+                duration: 100,
+                repeat: 5,
+                yoyo: true,
+                onComplete: () => {
+                    this.player.alpha = 1;
+                    this.player.isInvincible = false;
+                }
+            });
+
+            //lose condition: lives = 0
+            if (this.uiScene && this.uiScene.lives <= 0) {
+                this.triggerGameOver('No lives left');
+            }
+        };
+
+        //bomb hit
+        this.hitBomb = (player, bomb) => {
+            if (this.gameOver) return;
+            bomb.destroy();
+            if (!player.isInvincible) {
+                this.playerHit();
+            }
+        };
+
+        //patrol enemies
+        this.enemies = this.physics.add.group();
+        const patrolPositions = [
+            { x: 150, y: 430 },
+            { x: 650, y: 360 }
+        ];
+        patrolPositions.forEach(pos => {
+            const enemy = new PatrolEnemy(this, pos.x, pos.y, 'patrolEnemy');
+            enemy.setScale(0.1);
+            enemy.setSize(180, 425);
+            enemy.setOffset(180, 180);
+            enemy.speed = 80;
+            enemy.direction = 1;
+            enemy.play("patrolIdle");
+            this.enemies.add(enemy);
+        });
+
+        //chase enemies
+        this.chasers = this.physics.add.group();
+        const chasePositions = [
+            { x: 500, y: 260 },
+            { x: 200, y: 160 }
+        ];
+        chasePositions.forEach(pos => {
+            const chaser = new ChaseEnemy(this, pos.x, pos.y, 'chaseEnemy');
+            chaser.setScale(0.1);
+            chaser.setSize(180, 425);
+            chaser.setOffset(180, 180);
+            chaser.speed = 80;
+            chaser.direction = 1;
+            chaser.play("chaseIdle");
+            this.chasers.add(chaser);
+        });
+
+        //enemy collisions
+        this.physics.add.collider(this.enemies, this.ground);
+        this.physics.add.collider(this.enemies, this.platforms);
+        this.physics.add.collider(this.chasers, this.ground);
+        this.physics.add.collider(this.chasers, this.platforms);
+        this.physics.add.overlap(this.player, this.enemies, this.hitEnemy, null, this);
+        this.physics.add.overlap(this.player, this.chasers, this.hitEnemy, null, this);
+
+        //bombs group
+        this.bombs = this.physics.add.group();
+        this.physics.add.collider(this.bombs, this.ground);
+        this.physics.add.collider(this.bombs, this.platforms);
+        this.physics.add.overlap(this.player, this.bombs, this.hitBomb, null, this);
+
+        //helper to create stars
+        const createStar = (x, y) => {
+            const star = this.stars.create(x, y || 0, "star");
+            star.setScale(0.5);
+            star.setCircle(star.width / 2);
+            star.setBounce(0);
+            star.setCollideWorldBounds(true);
+            return star;
+        };
+
+        //initial stars
+        createStar(Phaser.Math.Between(50, 750), 0);
+        createStar(250, 150);
+        createStar(650, 120);
+
+        //star collisions
+        this.physics.add.collider(this.stars, this.ground);
+        this.physics.add.collider(this.stars, this.platforms);
+        this.physics.add.overlap(this.player, this.stars, this.collectStar, null, this);
+
+        //launch UI
+        this.scene.launch('UI');
+    }
+
+    //win trigger
+    triggerWin() {
+        if (this.gameOver) return;
+        this.gameOver = true;
+        this.physics.pause();
+        
+        if (this.uiScene) {
+            this.uiScene.stopTimer();
+        }
+        
+        const currentBest = parseInt(localStorage.getItem('highScore')) || 0;
+        if (this.score > currentBest) {
+            localStorage.setItem('highScore', this.score.toString());
+        }
+        
+        const bestTime = parseFloat(localStorage.getItem('bestTime')) || 999;
+        if (this.timeElapsed < bestTime) {
+            localStorage.setItem('bestTime', this.timeElapsed.toFixed(1));
+        }
+        
+        console.log("Triggering Victory with score: " + this.score + " time: " + this.timeElapsed + "s");
+        this.scene.start('Victory', { 
+            score: this.score, 
+            time: this.timeElapsed 
+        });
+    }
+
+    //game over trigger
+    triggerGameOver(reason) {
+        if (this.gameOver) return;
+        this.gameOver = true;
+        this.physics.pause();
+        
+        if (this.uiScene) {
+            this.uiScene.stopTimer();
+        }
+        
+        const currentBest = parseInt(localStorage.getItem('highScore')) || 0;
+        if (this.score > currentBest) {
+            localStorage.setItem('highScore', this.score.toString());
+            console.log("New high score on loss: " + this.score);
+        }
+        
+        console.log("Triggering GameOver with score: " + this.score + " reason: " + reason);
+        this.scene.start('GameOver', { 
+            score: this.score, 
+            reason: reason,
+            isNewHighScore: this.score > currentBest
+        });
+    }
+
+    update() {
+        if (this.gameOver) return;
+
+        let speed = 250;
+        let moving = false;
+
+        //movement
+        if (this.cursors.left.isDown) {
+            this.player.setVelocityX(-speed);
+            this.player.setFlipX(true);
+            moving = true;
+        }
+        else if (this.cursors.right.isDown) {
+            this.player.setVelocityX(speed);
+            this.player.setFlipX(false);
+            moving = true;
+        }
+        else {
+            this.player.setVelocityX(0);
+        }
+
+        //jump
+        if (this.cursors.up.isDown && this.player.body.blocked.down) {
+            this.player.setVelocityY(-520);
+        }
+
+        //animation
+        if (!this.player.body.blocked.down) {
+            this.player.play("jump", true);
+        }
+        else if (moving) {
+            this.player.play("walk", true);
+        }
+        else {
+            this.player.play("idle", true);
+        }
+
+        //update enemies
+        this.enemies.getChildren().forEach(e => {
+            if (e.active) e.patrol(this.platforms);
+        });
+        this.chasers.getChildren().forEach(e => {
+            if (e.active) e.chase(this.player);
+        });
+    }
+}
